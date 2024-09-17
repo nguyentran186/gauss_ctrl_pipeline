@@ -36,11 +36,9 @@ class GaussCtrlPipeline:
     def __init__(
         self,
         config: GaussCtrlPipelineConfig,
-        train_images,
-        eval_images,
-        device: str,
+        images_path,
         ):
-        self.datamanager: DataManager = DataManager(config.datamanager, train_images, eval_images)
+        self.datamanager: DataManager = DataManager(config.datamanager, images_path)
         # self.datamanager.to(device)
         
         self.langsam = LangSam()

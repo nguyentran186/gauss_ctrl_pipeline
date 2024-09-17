@@ -16,19 +16,23 @@ class DataManagerConfig:
     sampled_views_every_subset: int = 10
     load_all: bool = False
 
+import os
+from PIL import Image
+import torch
+from torchvision import transforms
+from typing import List, Dict, Union
+
 class DataManager:
-    """Custom data manager for handling image arrays."""
-    
+    """Custom data manager for handling image arrays loaded from folder paths."""
+
     def __init__(self,
                  config: DataManagerConfig,
-                 train_images: List[Dict[str, torch.Tensor]],
-                 eval_images: List[Dict[str, torch.Tensor]],
+                 data_folder: str,
                  device: Union[torch.device, str] = "cpu",
                  **kwargs):
         self.config = config
         self.device = device
-        self.train_images = train_images
-        self.eval_images = eval_images
+        self.train_images = self.load_images_from_folder(data_folder)
 
         self.sample_idx = []
         self.step_every = 1
@@ -55,6 +59,38 @@ class DataManager:
                 self.train_data.append({'rgb': data['rgb'], 'depth': data['depth'], 'image_idx': i})
             self.train_unseen_cameras = list(range(self.config.subset_num * self.config.sampled_views_every_subset))
 
+    def load_images_from_folder(self, folder_path: str) -> List[Dict[str, torch.Tensor]]:
+        """Loads and matches RGB and depth images from the specified folder."""
+        image_folder = os.path.join(folder_path, 'images')
+        depth_folder = os.path.join(folder_path, 'depth')
+
+        # Get the list of image and depth files
+        image_files = sorted([f for f in os.listdir(image_folder) if f.endswith(['.png', '.jpg'])])
+        depth_files = sorted([f for f in os.listdir(depth_folder) if f.endswith(['.png', '.jpg'])])
+
+        assert len(image_files) == len(depth_files), "Mismatch between image and depth file counts."
+
+        transform_rgb = transforms.Compose([transforms.ToTensor()])
+        transform_depth = transforms.Compose([transforms.ToTensor()])
+
+        image_depth_pairs = []
+        
+        for img_file, depth_file in zip(image_files, depth_files):
+            img_name, depth_name = img_file.split('.')[0], depth_file.split('.')[0]
+            assert img_name == depth_name, f"Image and depth file names do not match: {img_name} vs {depth_name}"
+
+            # Load and transform the images to tensors
+            rgb_image = Image.open(os.path.join(image_folder, img_file)).convert('RGB')
+            depth_image = Image.open(os.path.join(depth_folder, depth_file)).convert('L')
+
+            rgb_tensor = transform_rgb(rgb_image)
+            depth_tensor = transform_depth(depth_image).unsqueeze(0)  # Add an extra channel for depth
+
+            image_depth_pairs.append({'rgb': rgb_tensor, 'depth': depth_tensor})
+
+        return image_depth_pairs
+
+
     def cache_images(self):
         """Caches the train and eval images in memory."""
         cached_train = []
@@ -67,14 +103,7 @@ class DataManager:
             data["depth"] = data["depth"].to(self.device)
             cached_train.append(data)
 
-        CONSOLE.log("Caching eval images")
-        for i in tqdm(range(len(self.eval_images)), leave=False):
-            data = deepcopy(self.eval_images[i])
-            data["rgb"] = data["rgb"].to(self.device)
-            data["depth"] = data["depth"].to(self.device)
-            cached_eval.append(data)
-
-        return cached_train, cached_eval
+        return cached_train
 
     def next_train(self) -> Dict:
         """Returns the next training batch."""
