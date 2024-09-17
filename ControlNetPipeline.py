@@ -18,6 +18,7 @@ from diffusers import StableDiffusionControlNetPipeline, ControlNetModel, UNet2D
 from diffusers.schedulers import DDIMScheduler, DDIMInverseScheduler
 from diffusers.models.attention_processor import AttnProcessor
 from ControlNetDatamanager import DataManagerConfig, DataManager
+import cv2
 
 CONSOLE = Console(width=120)
 
@@ -28,8 +29,8 @@ class GaussCtrlPipelineConfig:
     prompt: str = "depth smooth"
     guidance_scale: float = 5
     num_inference_steps: int = 20
-    chunk_size: int = 5
-    ref_view_num: int = 4
+    chunk_size: int = 4
+    ref_view_num: int = 1
     diffusion_ckpt: str = 'CompVis/stable-diffusion-v1-4'
         
 
@@ -62,7 +63,8 @@ class GaussCtrlPipeline:
         self.negative_prompts = 'longbody, lowres, bad anatomy, bad hands, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality'
     
         random.seed(13789)
-        view_num = len(self.datamanager.train_images)
+        # view_num = len(self.datamanager.train_images)
+        view_num = 5
         anchors = [(view_num * i) // self.config.ref_view_num for i in range(self.config.ref_view_num)] + [view_num]
         self.ref_indices = [random.randint(anchor, anchors[idx+1]) for idx, anchor in enumerate(anchors[:-1])]
         self.num_ref_views = len(self.ref_indices)
@@ -77,7 +79,9 @@ class GaussCtrlPipeline:
         # Implement the rendering logic
         for index in range(len(self.datamanager.train_images)):
             data = self.datamanager.train_images[index]
-            name = data['image_name']
+            data['image'] = (cv2.resize(data['image'], (512, 512)) / 255.0).astype(np.float32)
+            data['depth_image'] = np.expand_dims(cv2.resize(data['depth_image'], (512, 512)), axis=-1)
+            
             rendered_rgb = torch.from_numpy(data['image']).to(torch.float16).to(self.pipe_device)
             rendered_depth = torch.from_numpy(data['depth_image']).to(torch.float16).to(self.pipe_device)
         
@@ -93,19 +97,8 @@ class GaussCtrlPipeline:
                                 image=disparity, return_dict=False, guidance_scale=0, output_type='latent')
             
             latent = latent.cpu()
-            save_path = os.path.join(self.images_path, 'latent', f'{name}.pt')
-            torch.save(latent, save_path)
-            
-            # if self.config.langsam_obj != "":
-            #     langsam_obj = self.config.langsam_obj
-            #     langsam_rgb_pil = Image.fromarray((rendered_rgb.cpu().numpy() * 255).astype(np.uint8))
-            #     masks, _, _, _ = self.langsam.predict(langsam_rgb_pil, langsam_obj)
-            #     mask_npy = masks.clone().cpu().numpy()[0] * 1
-
-            # if self.config.langsam_obj != "":
-            #     self.update_datasets(index, rendered_rgb.cpu(), rendered_depth, latent, mask_npy)
-            # else: 
-            #     self.update_datasets(index, rendered_rgb.cpu(), rendered_depth, latent, None)
+            # save_path = os.path.join(self.images_path, 'latent', f'{name}.pt')
+            # torch.save(latent, save_path)
             self.update_datasets(index, rendered_rgb.cpu(), rendered_depth, latent, None)
             
     def edit_images(self):
@@ -137,7 +130,7 @@ class GaussCtrlPipeline:
         ref_z0s = np.concatenate(ref_z0_list, axis=0)
         ref_disparity_torch = torch.from_numpy(ref_disparities.copy()).to(torch.float16).to(self.pipe_device)
         ref_z0_torch = torch.from_numpy(ref_z0s.copy()).to(torch.float16).to(self.pipe_device)
-    
+
         # Edit images in chunk
         for idx in range(0, len(self.datamanager.train_data), self.chunk_size): 
             chunked_data = self.datamanager.train_data[idx: idx+self.chunk_size]
@@ -157,7 +150,6 @@ class GaussCtrlPipeline:
 
             disp_ctrl_chunk = torch.concatenate((ref_disparity_torch, disparities_torch), dim=0)
             latents_chunk = torch.concatenate((ref_z0_torch, latents_torch), dim=0)
-
             chunk_edited = self.pipe(
                                 prompt=[self.positive_prompt] * (self.num_ref_views+len(chunked_data)),
                                 negative_prompt=[self.negative_prompts] * (self.num_ref_views+len(chunked_data)),
@@ -182,7 +174,7 @@ class GaussCtrlPipeline:
 
                     unedited_image = unedited_images[local_idx].permute(2,0,1)
                     bg_cntrl_edited_image = edited_image * mask[None] + unedited_image * bg_mask[None] 
-
+                # TODO Save edited image
                 self.datamanager.train_data[global_idx]["image"] = bg_cntrl_edited_image.permute(1,2,0).to(torch.float32) # [512 512 3]
         print("#############################")
         CONSOLE.print("Done Editing", style="bold yellow")
@@ -221,7 +213,7 @@ class GaussCtrlPipeline:
     def update_datasets(self, index, unedited_image, depth, latent, mask):
         """Save mid results"""
         self.datamanager.train_data[index]["unedited_image"] = unedited_image 
-        self.datamanager.train_data[index]["depth"] = depth.permute(2,0,1).cpu().to(torch.float32).numpy()
+        self.datamanager.train_data[index]["depth_image"] = depth.permute(2,0,1).cpu().to(torch.float32).numpy()
         self.datamanager.train_data[index]["z_0_image"] = latent.cpu().to(torch.float32).numpy()
         if mask is not None:
             self.datamanager.train_data[index]["mask_image"] = mask 
