@@ -5,40 +5,45 @@ import numpy as np
 from PIL import Image
 from typing import Optional, Type, List
 from typing_extensions import Literal
+from dataclasses import dataclass, field
+
 
 from lang_sam import LangSAM
+import utils
+from copy import deepcopy
 
 from diffusers import StableDiffusionControlNetPipeline, ControlNetModel, UNet2DConditionModel
 from diffusers.schedulers import DDIMScheduler, DDIMInverseScheduler
 from diffusers.models.attention_processor import AttnProcessor
+from ControlNetDatamanager import DataManagerConfig, DataManager
 
-class PipelineConfig:
-    def __init__(self, 
-                 render_rate: int = 500,
-                 prompt: str = "",
-                 guidance_scale: float = 5,
-                 num_inference_steps: int = 20,
-                 chunk_size: int = 5,
-                 ref_view_num: int = 4,
-                 diffusion_ckpt: str = 'CompVis/stable-diffusion-v1-4'):
-        self.render_rate = render_rate
-        self.prompt = prompt
-        self.guidance_scale = guidance_scale
-        self.num_inference_steps = num_inference_steps
-        self.chunk_size = chunk_size
-        self.ref_view_num = ref_view_num
-        self.diffusion_ckpt = diffusion_ckpt
+CONSOLE = Console(width=120)
+
+@dataclass
+class GaussCtrlPipelineConfig:
+    datamanager: DataManagerConfig = DataManagerConfig()
+    render_rate: int = 500
+    prompt: str = ""
+    guidance_scale: float = 5
+    num_inference_steps: int = 20
+    chunk_size: int = 5
+    ref_view_num: int = 4
+    diffusion_ckpt: str = 'CompVis/stable-diffusion-v1-4'
         
 
-class ControlNetPipeline:
-    config: PipelineConfig
+class GaussCtrlPipeline:
+    config: GaussCtrlPipelineConfig
     def __init__(
         self,
-        config: PipelineConfig,
+        config: GaussCtrlPipelineConfig,
+        train_images,
+        eval_images,
         device: str,
         ):
+        self.datamanager: DataManager = DataManager(config.datamanager, train_images, eval_images)
+        # self.datamanager.to(device)
+        
         self.langsam = LangSam()
-        self.prompt = self.config.prompt
         self.pipe_device = 'cuda:0'
         
         self.ddim_scheduler = DDIMScheduler.from_pretrained(self.config.diffusion_ckpt, subfolder="scheduler")
@@ -48,32 +53,181 @@ class ControlNetPipeline:
         self.pipe = StableDiffusionControlNetPipeline.from_pretrained(self.config.diffusion_ckpt, controlnet=controlnet).to(self.device).to(torch.float16)
         self.pipe.to(self.pipe_device)
     
+        self.prompt = self.config.prompt
         added_prompt = 'best quality, extremely detailed'
         self.positive_prompt = self.prompt + ', ' + added_prompt
         self.negative_prompts = 'longbody, lowres, bad anatomy, bad hands, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality'
     
         random.seed(13789)
-    
+        view_num = len(self.datamanager.train_images)
+        anchors = [(view_num * i) // self.config.ref_view_num for i in range(self.config.ref_view_num)] + [view_num]
+        self.ref_indices = [random.randint(anchor, anchors[idx+1]) for idx, anchor in enumerate(anchors[:-1])]
+        
         self.num_inference_steps = self.config.num_inference_steps
         self.guidance_scale = self.config.guidance_scale
         self.controlnet_conditioning_scale = 1.0
         self.eta = 0.0
         self.chunk_size = self.config.chunk_size
+        
     def render_reverse(self):
         # Implement the rendering logic
+        for index in range(len(self.datamanager.train_images)):
+            data = self.datamanager.train_images[index]
+            rendered_rgb = data['rgb'].to(torch.float16)
+            rendered_depth = data['depth'].to(torch.float16)
         
+            self.pipe.unet.set_attn_processor(processor=AttnProcessor())
+            self.pipe.controlnet.set_attn_processor(processor=AttnProcessor()) 
+            init_latent = self.image2latent(rendered_rgb)
+            disparity = self.depth2disparity_torch(rendered_depth[:,:,0][None]) 
+            
+            self.pipe.scheduler = self.ddim_inverser
+            latent, _ = self.pipe(prompt=self.positive_prompt, #  placeholder here, since cfg=0
+                                num_inference_steps=self.num_inference_steps, 
+                                latents=init_latent, 
+                                image=disparity, return_dict=False, guidance_scale=0, output_type='latent')
+            
+            if self.config.langsam_obj != "":
+                langsam_obj = self.config.langsam_obj
+                langsam_rgb_pil = Image.fromarray((rendered_rgb.cpu().numpy() * 255).astype(np.uint8))
+                masks, _, _, _ = self.langsam.predict(langsam_rgb_pil, langsam_obj)
+                mask_npy = masks.clone().cpu().numpy()[0] * 1
+
+            if self.config.langsam_obj != "":
+                self.update_datasets(index, rendered_rgb.cpu(), rendered_depth, latent, mask_npy)
+            else: 
+                self.update_datasets(index, rendered_rgb.cpu(), rendered_depth, latent, None)
     def edit_images(self):
         # Implement the image editing logic
-        pass
+        self.pipe.scheduler = self.ddim_scheduler
+        self.pipe.unet.set_attn_processor(
+                        processor=utils.CrossViewAttnProcessor(self_attn_coeff=0.6,
+                        unet_chunk_size=2))
+        self.pipe.controlnet.set_attn_processor(
+                        processor=utils.CrossViewAttnProcessor(self_attn_coeff=0,
+                        unet_chunk_size=2)) 
+        
+        CONSOLE.print("Done Resetting Attention Processor", style="bold blue")
+        
+        print("#############################")
+        CONSOLE.print("Start Editing: ", style="bold yellow")
+        CONSOLE.print(f"Reference views are {[j+1 for j in self.ref_indices]}", style="bold yellow")
+        print("#############################")
+        ref_disparity_list = []
+        ref_z0_list = []
+        for ref_idx in self.ref_indices:
+            ref_data = deepcopy(self.datamanager.train_data[ref_idx]) 
+            ref_disparity = self.depth2disparity(ref_data['depth_image']) 
+            ref_z0 = ref_data['z_0_image']
+            ref_disparity_list.append(ref_disparity)
+            ref_z0_list.append(ref_z0) 
 
+        ref_disparities = np.concatenate(ref_disparity_list, axis=0)
+        ref_z0s = np.concatenate(ref_z0_list, axis=0)
+        ref_disparity_torch = torch.from_numpy(ref_disparities.copy()).to(torch.float16).to(self.pipe_device)
+        ref_z0_torch = torch.from_numpy(ref_z0s.copy()).to(torch.float16).to(self.pipe_device)
+    
+        # Edit images in chunk
+        for idx in range(0, len(self.datamanager.train_data), self.chunk_size): 
+            chunked_data = self.datamanager.train_data[idx: idx+self.chunk_size]
+            
+            indices = [current_data['image_idx'] for current_data in chunked_data]
+            mask_images = [current_data['mask_image'] for current_data in chunked_data if 'mask_image' in current_data.keys()] 
+            unedited_images = [current_data['unedited_image'] for current_data in chunked_data]
+            CONSOLE.print(f"Generating view: {indices}", style="bold yellow")
+
+            depth_images = [self.depth2disparity(current_data['depth_image']) for current_data in chunked_data]
+            disparities = np.concatenate(depth_images, axis=0)
+            disparities_torch = torch.from_numpy(disparities.copy()).to(torch.float16).to(self.pipe_device)
+
+            z_0_images = [current_data['z_0_image'] for current_data in chunked_data] # list of np array
+            z0s = np.concatenate(z_0_images, axis=0)
+            latents_torch = torch.from_numpy(z0s.copy()).to(torch.float16).to(self.pipe_device)
+
+            disp_ctrl_chunk = torch.concatenate((ref_disparity_torch, disparities_torch), dim=0)
+            latents_chunk = torch.concatenate((ref_z0_torch, latents_torch), dim=0)
+            
+            chunk_edited = self.pipe(
+                                prompt=[self.positive_prompt] * (self.num_ref_views+len(chunked_data)),
+                                negative_prompt=[self.negative_prompts] * (self.num_ref_views+len(chunked_data)),
+                                latents=latents_chunk,
+                                image=disp_ctrl_chunk,
+                                num_inference_steps=self.num_inference_steps,
+                                guidance_scale=self.guidance_scale,
+                                controlnet_conditioning_scale=self.controlnet_conditioning_scale,
+                                eta=self.eta,
+                                output_type='pt',
+                            ).images[self.num_ref_views:]
+            chunk_edited = chunk_edited.cpu() 
+
+            # Insert edited images back to train data for training
+            for local_idx, edited_image in enumerate(chunk_edited):
+                global_idx = indices[local_idx]
+
+                bg_cntrl_edited_image = edited_image
+                if mask_images != []:
+                    mask = torch.from_numpy(mask_images[local_idx])
+                    bg_mask = 1 - mask
+
+                    unedited_image = unedited_images[local_idx].permute(2,0,1)
+                    bg_cntrl_edited_image = edited_image * mask[None] + unedited_image * bg_mask[None] 
+
+                self.datamanager.train_data[global_idx]["image"] = bg_cntrl_edited_image.permute(1,2,0).to(torch.float32) # [512 512 3]
+        print("#############################")
+        CONSOLE.print("Done Editing", style="bold yellow")
+        print("#############################")
+    
+    
+    @torch.no_grad()
     def image2latent(self, image):
-        # Implement the image-to-latent conversion
-        pass
+        """Encode images to latents"""
+        image = image * 2 - 1
+        image = image.permute(2, 0, 1).unsqueeze(0) # torch.Size([1, 3, 512, 512]) -1~1
+        latents = self.pipe.vae.encode(image)['latent_dist'].mean
+        latents = latents * 0.18215
+        return latents
 
     def depth2disparity(self, depth):
-        # Implement depth-to-disparity conversion
-        pass
+        """
+        Args: depth numpy array [1 512 512]
+        Return: disparity
+        """
+        disparity = 1 / (depth + 1e-5)
+        disparity_map = disparity / np.max(disparity) # 0.00233~1
+        disparity_map = np.concatenate([disparity_map, disparity_map, disparity_map], axis=0)
+        return disparity_map[None]
+    
+    def depth2disparity_torch(self, depth):
+        """
+        Args: depth torch tensor
+        Return: disparity
+        """
+        disparity = 1 / (depth + 1e-5)
+        disparity_map = disparity / torch.max(disparity) # 0.00233~1
+        disparity_map = torch.concatenate([disparity_map, disparity_map, disparity_map], dim=0)
+        return disparity_map[None]
 
-    def update_datasets(self, cam_idx, unedited_image, depth, latent, mask):
-        # Implement dataset update logic
-        pass
+    def update_datasets(self, index, unedited_image, depth, latent, mask):
+        """Save mid results"""
+        self.datamanager.train_data[index]["unedited_image"] = unedited_image 
+        self.datamanager.train_data[index]["depth_image"] = depth.permute(2,0,1).cpu().to(torch.float32).numpy()
+        self.datamanager.train_data[index]["z_0_image"] = latent.cpu().to(torch.float32).numpy()
+        if mask is not None:
+            self.datamanager.train_data[index]["mask_image"] = mask 
+
+    def get_train_loss_dict(self, step: int):
+        """This function gets your training loss dict and performs image editing.
+        Args:
+            step: current iteration step to update sampler if using DDP (distributed)
+        """
+        ray_bundle, batch = self.datamanager.next_train(step) # camera, data
+        model_outputs = self._model(ray_bundle)  # train distributed data parallel model if world_size > 1
+        
+        metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
+        loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
+
+        return model_outputs, loss_dict, metrics_dict
+
+    def forward(self):
+        """Not implemented since we only want the parameter saving of the nn module, but not forward()"""
+        raise NotImplementedError
