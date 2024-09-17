@@ -1,10 +1,12 @@
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Dict, Union
-import torch
+import numpy as np
 from tqdm import tqdm
 from copy import deepcopy
 from rich.progress import Console
+import os
+from PIL import Image
 
 CONSOLE = Console(width=120)
 
@@ -16,19 +18,13 @@ class DataManagerConfig:
     sampled_views_every_subset: int = 10
     load_all: bool = False
 
-import os
-from PIL import Image
-import torch
-from torchvision import transforms
-from typing import List, Dict, Union
-
 class DataManager:
     """Custom data manager for handling image arrays loaded from folder paths."""
 
     def __init__(self,
                  config: DataManagerConfig,
                  data_folder: str,
-                 device: Union[torch.device, str] = "cpu",
+                 device: Union[str] = "cpu",
                  **kwargs):
         self.config = config
         self.device = device
@@ -56,10 +52,10 @@ class DataManager:
             self.train_data = []
             for i, data in enumerate(self.train_data_temp):
                 # Assuming data contains 'rgb' and 'depth' fields
-                self.train_data.append({'rgb': data['rgb'], 'depth': data['depth'], 'image_idx': i})
+                self.train_data.append({'z_0_image': data['z_0_image'], 'depth_image': data['depth_image'], 'unedited_image': data['unedited_image'], 'image_idx': i})
             self.train_unseen_cameras = list(range(self.config.subset_num * self.config.sampled_views_every_subset))
 
-    def load_images_from_folder(self, folder_path: str) -> List[Dict[str, torch.Tensor]]:
+    def load_images_from_folder(self, folder_path: str) -> List[Dict[str, np.ndarray]]:
         """Loads and matches RGB and depth images from the specified folder."""
         image_folder = os.path.join(folder_path, 'images')
         depth_folder = os.path.join(folder_path, 'depth')
@@ -70,23 +66,19 @@ class DataManager:
 
         assert len(image_files) == len(depth_files), "Mismatch between image and depth file counts."
 
-        transform_rgb = transforms.Compose([transforms.ToTensor()])
-        transform_depth = transforms.Compose([transforms.ToTensor()])
-
         image_depth_pairs = []
         
-        for img_file, depth_file in zip(image_files, depth_files):
+        for image_idx, (img_file, depth_file) in enumerate(zip(image_files, depth_files)):
             img_name, depth_name = img_file.split('.')[0], depth_file.split('.')[0]
             assert img_name == depth_name, f"Image and depth file names do not match: {img_name} vs {depth_name}"
 
-            # Load and transform the images to tensors
-            rgb_image = Image.open(os.path.join(image_folder, img_file)).convert('RGB')
-            depth_image = Image.open(os.path.join(depth_folder, depth_file)).convert('L')
+            # Load images and convert to NumPy arrays
+            rgb_image = np.array(Image.open(os.path.join(image_folder, img_file)).convert('RGB'))
+            depth_image = np.array(Image.open(os.path.join(depth_folder, depth_file)).convert('L'))
 
-            rgb_tensor = transform_rgb(rgb_image)
-            depth_tensor = transform_depth(depth_image).unsqueeze(0)  # Add an extra channel for depth
-
-            image_depth_pairs.append({'rgb': rgb_tensor, 'depth': depth_tensor})
+            # Add depth dimension explicitly
+            depth_image = np.expand_dims(depth_image, axis=-1)
+            image_depth_pairs.append({'z_0_image': rgb_image, 'depth_image': depth_image, 'unedited_image': rgb_image, 'image_idx': image_idx})
 
         return image_depth_pairs
 
@@ -99,8 +91,6 @@ class DataManager:
         CONSOLE.log("Caching train images")
         for i in tqdm(range(len(self.train_data)), leave=False):
             data = deepcopy(self.train_data[i])
-            data["rgb"] = data["rgb"].to(self.device)
-            data["depth"] = data["depth"].to(self.device)
             cached_train.append(data)
 
         return cached_train
@@ -114,7 +104,5 @@ class DataManager:
             self.train_unseen_cameras = [i for i in range(len(self.train_data))]
 
         data = deepcopy(self.train_data[image_idx])
-        data["rgb"] = data["rgb"].to(self.device)
-        data["depth"] = data["depth"].to(self.device)
 
         return data

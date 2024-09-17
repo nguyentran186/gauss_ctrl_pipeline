@@ -8,7 +8,7 @@ from typing_extensions import Literal
 from dataclasses import dataclass, field
 
 
-from lang_sam import LangSAM
+# from lang_sam import LangSAM
 import utils
 from copy import deepcopy
 from rich.progress import Console
@@ -42,7 +42,7 @@ class GaussCtrlPipeline:
         self.datamanager: DataManager = DataManager(config.datamanager, images_path)
         # self.datamanager.to(device)
         
-        self.langsam = LangSAM()
+        # self.langsam = LangSAM()
         self.pipe_device = 'cuda:0'
         self.config = config
         
@@ -62,6 +62,7 @@ class GaussCtrlPipeline:
         view_num = len(self.datamanager.train_images)
         anchors = [(view_num * i) // self.config.ref_view_num for i in range(self.config.ref_view_num)] + [view_num]
         self.ref_indices = [random.randint(anchor, anchors[idx+1]) for idx, anchor in enumerate(anchors[:-1])]
+        self.num_ref_views = len(self.ref_indices)
         
         self.num_inference_steps = self.config.num_inference_steps
         self.guidance_scale = self.config.guidance_scale
@@ -87,16 +88,18 @@ class GaussCtrlPipeline:
                                 latents=init_latent, 
                                 image=disparity, return_dict=False, guidance_scale=0, output_type='latent')
             
-            if self.config.langsam_obj != "":
-                langsam_obj = self.config.langsam_obj
-                langsam_rgb_pil = Image.fromarray((rendered_rgb.cpu().numpy() * 255).astype(np.uint8))
-                masks, _, _, _ = self.langsam.predict(langsam_rgb_pil, langsam_obj)
-                mask_npy = masks.clone().cpu().numpy()[0] * 1
+            # if self.config.langsam_obj != "":
+            #     langsam_obj = self.config.langsam_obj
+            #     langsam_rgb_pil = Image.fromarray((rendered_rgb.cpu().numpy() * 255).astype(np.uint8))
+            #     masks, _, _, _ = self.langsam.predict(langsam_rgb_pil, langsam_obj)
+            #     mask_npy = masks.clone().cpu().numpy()[0] * 1
 
-            if self.config.langsam_obj != "":
-                self.update_datasets(index, rendered_rgb.cpu(), rendered_depth, latent, mask_npy)
-            else: 
-                self.update_datasets(index, rendered_rgb.cpu(), rendered_depth, latent, None)
+            # if self.config.langsam_obj != "":
+            #     self.update_datasets(index, rendered_rgb.cpu(), rendered_depth, latent, mask_npy)
+            # else: 
+            #     self.update_datasets(index, rendered_rgb.cpu(), rendered_depth, latent, None)
+            self.update_datasets(index, rendered_rgb.cpu(), rendered_depth, latent, None)
+            
     def edit_images(self):
         # Implement the image editing logic
         self.pipe.scheduler = self.ddim_scheduler
@@ -116,7 +119,7 @@ class GaussCtrlPipeline:
         ref_disparity_list = []
         ref_z0_list = []
         for ref_idx in self.ref_indices:
-            ref_data = deepcopy(self.datamanager.train_data[ref_idx]) 
+            ref_data = deepcopy(self.datamanager.train_data[ref_idx])
             ref_disparity = self.depth2disparity(ref_data['depth_image']) 
             ref_z0 = ref_data['z_0_image']
             ref_disparity_list.append(ref_disparity)
@@ -136,8 +139,8 @@ class GaussCtrlPipeline:
             unedited_images = [current_data['unedited_image'] for current_data in chunked_data]
             CONSOLE.print(f"Generating view: {indices}", style="bold yellow")
 
-            depth_images = [self.depth2disparity(current_data['depth_image']) for current_data in chunked_data]
-            disparities = np.concatenate(depth_images, axis=0)
+            depths = [self.depth2disparity(current_data['depth_image']) for current_data in chunked_data]
+            disparities = np.concatenate(depths, axis=0)
             disparities_torch = torch.from_numpy(disparities.copy()).to(torch.float16).to(self.pipe_device)
 
             z_0_images = [current_data['z_0_image'] for current_data in chunked_data] # list of np array
@@ -210,7 +213,7 @@ class GaussCtrlPipeline:
     def update_datasets(self, index, unedited_image, depth, latent, mask):
         """Save mid results"""
         self.datamanager.train_data[index]["unedited_image"] = unedited_image 
-        self.datamanager.train_data[index]["depth_image"] = depth.permute(2,0,1).cpu().to(torch.float32).numpy()
+        self.datamanager.train_data[index]["depth"] = depth.permute(2,0,1).cpu().to(torch.float32).numpy()
         self.datamanager.train_data[index]["z_0_image"] = latent.cpu().to(torch.float32).numpy()
         if mask is not None:
             self.datamanager.train_data[index]["mask_image"] = mask 
