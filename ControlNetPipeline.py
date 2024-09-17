@@ -175,6 +175,9 @@ class GaussCtrlPipeline:
                     unedited_image = unedited_images[local_idx].permute(2,0,1)
                     bg_cntrl_edited_image = edited_image * mask[None] + unedited_image * bg_mask[None] 
                 # TODO Save edited image
+                # Promt testing
+                # -> SDXLControlNetInpainPipeline
+                # Dynamic Ref_image
                 self.datamanager.train_data[global_idx]["image"] = bg_cntrl_edited_image.permute(1,2,0).to(torch.float32) # [512 512 3]
         print("#############################")
         CONSOLE.print("Done Editing", style="bold yellow")
