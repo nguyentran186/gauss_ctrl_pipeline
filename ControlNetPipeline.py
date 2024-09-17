@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from lang_sam import LangSAM
 import utils
 from copy import deepcopy
+from rich.progress import Console
 
 from diffusers import StableDiffusionControlNetPipeline, ControlNetModel, UNet2DConditionModel
 from diffusers.schedulers import DDIMScheduler, DDIMInverseScheduler
@@ -41,14 +42,15 @@ class GaussCtrlPipeline:
         self.datamanager: DataManager = DataManager(config.datamanager, images_path)
         # self.datamanager.to(device)
         
-        self.langsam = LangSam()
+        self.langsam = LangSAM()
         self.pipe_device = 'cuda:0'
+        self.config = config
         
         self.ddim_scheduler = DDIMScheduler.from_pretrained(self.config.diffusion_ckpt, subfolder="scheduler")
         self.ddim_inverser = DDIMInverseScheduler.from_pretrained(self.config.diffusion_ckpt, subfolder="scheduler")
         controlnet = ControlNetModel.from_pretrained("lllyasviel/sd-controlnet-depth")
         
-        self.pipe = StableDiffusionControlNetPipeline.from_pretrained(self.config.diffusion_ckpt, controlnet=controlnet).to(self.device).to(torch.float16)
+        self.pipe = StableDiffusionControlNetPipeline.from_pretrained(self.config.diffusion_ckpt, controlnet=controlnet).to(self.pipe_device).to(torch.float16)
         self.pipe.to(self.pipe_device)
     
         self.prompt = self.config.prompt

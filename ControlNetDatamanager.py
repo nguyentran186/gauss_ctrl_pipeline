@@ -65,8 +65,8 @@ class DataManager:
         depth_folder = os.path.join(folder_path, 'depth')
 
         # Get the list of image and depth files
-        image_files = sorted([f for f in os.listdir(image_folder) if f.endswith(['.png', '.jpg'])])
-        depth_files = sorted([f for f in os.listdir(depth_folder) if f.endswith(['.png', '.jpg'])])
+        image_files = sorted([f for f in os.listdir(image_folder) if f.endswith(('.png', '.jpg'))])
+        depth_files = sorted([f for f in os.listdir(depth_folder) if f.endswith(('.png', '.jpg'))])
 
         assert len(image_files) == len(depth_files), "Mismatch between image and depth file counts."
 

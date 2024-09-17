@@ -1,3 +1,3 @@
 from ControlNetPipeline import GaussCtrlPipeline, GaussCtrlPipelineConfig
 
-pipe = GaussCtrlPipeline(GaussCtrlPipelineConfig(), 'statue')
+pipe = GaussCtrlPipeline(GaussCtrlPipelineConfig(), 'data/statue')
