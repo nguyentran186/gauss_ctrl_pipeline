@@ -74,8 +74,8 @@ class GaussCtrlPipeline:
         # Implement the rendering logic
         for index in range(len(self.datamanager.train_images)):
             data = self.datamanager.train_images[index]
-            rendered_rgb = data['image'].to(torch.float16)
-            rendered_depth = data['depth_image'].to(torch.float16)
+            rendered_rgb = torch.from_numpy(data['image']).to(torch.float16).to(self.pipe_device)
+            rendered_depth = torch.from_numpy(data['depth_image']).to(torch.float16).to(self.pipe_device)
         
             self.pipe.unet.set_attn_processor(processor=AttnProcessor())
             self.pipe.controlnet.set_attn_processor(processor=AttnProcessor()) 
