@@ -24,7 +24,7 @@ CONSOLE = Console(width=120)
 class GaussCtrlPipelineConfig:
     datamanager: DataManagerConfig = DataManagerConfig()
     render_rate: int = 500
-    prompt: str = ""
+    prompt: str = "depth smooth"
     guidance_scale: float = 5
     num_inference_steps: int = 20
     chunk_size: int = 5
@@ -74,8 +74,8 @@ class GaussCtrlPipeline:
         # Implement the rendering logic
         for index in range(len(self.datamanager.train_images)):
             data = self.datamanager.train_images[index]
-            rendered_rgb = data['rgb'].to(torch.float16)
-            rendered_depth = data['depth'].to(torch.float16)
+            rendered_rgb = data['image'].to(torch.float16)
+            rendered_depth = data['depth_image'].to(torch.float16)
         
             self.pipe.unet.set_attn_processor(processor=AttnProcessor())
             self.pipe.controlnet.set_attn_processor(processor=AttnProcessor()) 
@@ -149,7 +149,7 @@ class GaussCtrlPipeline:
 
             disp_ctrl_chunk = torch.concatenate((ref_disparity_torch, disparities_torch), dim=0)
             latents_chunk = torch.concatenate((ref_z0_torch, latents_torch), dim=0)
-            
+
             chunk_edited = self.pipe(
                                 prompt=[self.positive_prompt] * (self.num_ref_views+len(chunked_data)),
                                 negative_prompt=[self.negative_prompts] * (self.num_ref_views+len(chunked_data)),

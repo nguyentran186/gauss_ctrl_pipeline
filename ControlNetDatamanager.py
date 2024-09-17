@@ -52,7 +52,12 @@ class DataManager:
             self.train_data = []
             for i, data in enumerate(self.train_data_temp):
                 # Assuming data contains 'rgb' and 'depth' fields
-                self.train_data.append({'z_0_image': data['z_0_image'], 'depth_image': data['depth_image'], 'unedited_image': data['unedited_image'], 'image_idx': i})
+                self.train_data.append({
+                    'image': data['image'],
+                    'z_0_image': data['z_0_image'], 
+                    'depth_image': data['depth_image'], 
+                    'unedited_image': data['unedited_image'], 
+                    'image_idx': i})
             self.train_unseen_cameras = list(range(self.config.subset_num * self.config.sampled_views_every_subset))
 
     def load_images_from_folder(self, folder_path: str) -> List[Dict[str, np.ndarray]]:
@@ -78,7 +83,11 @@ class DataManager:
 
             # Add depth dimension explicitly
             depth_image = np.expand_dims(depth_image, axis=-1)
-            image_depth_pairs.append({'z_0_image': rgb_image, 'depth_image': depth_image, 'unedited_image': rgb_image, 'image_idx': image_idx})
+            image_depth_pairs.append({'z_0_image': rgb_image, 
+                                      'image': rgb_image,
+                                      'depth_image': depth_image, 
+                                      'unedited_image': rgb_image, 
+                                      'image_idx': image_idx})
 
         return image_depth_pairs
 
