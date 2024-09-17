@@ -87,7 +87,9 @@ class DataManager:
                                       'image': rgb_image,
                                       'depth_image': depth_image, 
                                       'unedited_image': rgb_image, 
-                                      'image_idx': image_idx})
+                                      'image_idx': image_idx,
+                                      'image_name': img_name,
+                                      })
 
         return image_depth_pairs
 

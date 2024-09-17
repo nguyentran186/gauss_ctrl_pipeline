@@ -13,6 +13,7 @@ import utils
 from copy import deepcopy
 from rich.progress import Console
 
+import os
 from diffusers import StableDiffusionControlNetPipeline, ControlNetModel, UNet2DConditionModel
 from diffusers.schedulers import DDIMScheduler, DDIMInverseScheduler
 from diffusers.models.attention_processor import AttnProcessor
@@ -43,6 +44,8 @@ class GaussCtrlPipeline:
         # self.datamanager.to(device)
         
         # self.langsam = LangSAM()
+        self.images_path = images_path
+        
         self.pipe_device = 'cuda:0'
         self.config = config
         
@@ -74,6 +77,7 @@ class GaussCtrlPipeline:
         # Implement the rendering logic
         for index in range(len(self.datamanager.train_images)):
             data = self.datamanager.train_images[index]
+            name = data['image_name']
             rendered_rgb = torch.from_numpy(data['image']).to(torch.float16).to(self.pipe_device)
             rendered_depth = torch.from_numpy(data['depth_image']).to(torch.float16).to(self.pipe_device)
         
@@ -87,6 +91,10 @@ class GaussCtrlPipeline:
                                 num_inference_steps=self.num_inference_steps, 
                                 latents=init_latent, 
                                 image=disparity, return_dict=False, guidance_scale=0, output_type='latent')
+            
+            latent = latent.cpu()
+            save_path = os.path.join(self.images_path, 'latent', f'{name}.pt')
+            torch.save(latent, save_path)
             
             # if self.config.langsam_obj != "":
             #     langsam_obj = self.config.langsam_obj
