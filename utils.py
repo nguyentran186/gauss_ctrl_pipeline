@@ -4,6 +4,8 @@ from torchvision.transforms import Resize, InterpolationMode
 from einops import rearrange
 import glob
 from diffusers.utils import USE_PEFT_BACKEND
+import cv2
+from transformers import pipeline
 
 def read_depth2disparity(depth_dir):
     depth_paths = sorted(glob.glob(depth_dir + '/*.npy'))
@@ -131,3 +133,11 @@ class CrossViewAttnProcessor:
         hidden_states = hidden_states / attn.rescale_output_factor
 
         return hidden_states
+
+def saving_image(image, name):
+    image = image.cpu().numpy()
+    image = (image * 255).clip(0, 255).astype('uint8')
+    image = cv2.resize(image, (1008, 756))
+    image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+    cv2.imwrite(str(name) + "_edited.png", image)
+    

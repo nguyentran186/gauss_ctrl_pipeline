@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 # from lang_sam import LangSAM
 import utils
+from utils import saving_image
 from copy import deepcopy
 from rich.progress import Console
 
@@ -26,10 +27,10 @@ CONSOLE = Console(width=120)
 class GaussCtrlPipelineConfig:
     datamanager: DataManagerConfig = DataManagerConfig()
     render_rate: int = 500
-    prompt: str = "depth smooth"
+    prompt: str = "fit with the background, do not add new things"
     guidance_scale: float = 5
     num_inference_steps: int = 20
-    chunk_size: int = 4
+    chunk_size: int = 1
     ref_view_num: int = 1
     diffusion_ckpt: str = 'CompVis/stable-diffusion-v1-4'
         
@@ -53,6 +54,7 @@ class GaussCtrlPipeline:
         self.ddim_scheduler = DDIMScheduler.from_pretrained(self.config.diffusion_ckpt, subfolder="scheduler")
         self.ddim_inverser = DDIMInverseScheduler.from_pretrained(self.config.diffusion_ckpt, subfolder="scheduler")
         controlnet = ControlNetModel.from_pretrained("lllyasviel/sd-controlnet-depth")
+        # controlnet = ControlNetModel.from_pretrained("fusing/stable-diffusion-v1-5-controlnet-depth", torch_dtype=torch.float16)
         
         self.pipe = StableDiffusionControlNetPipeline.from_pretrained(self.config.diffusion_ckpt, controlnet=controlnet).to(self.pipe_device).to(torch.float16)
         self.pipe.to(self.pipe_device)
@@ -74,13 +76,26 @@ class GaussCtrlPipeline:
         self.controlnet_conditioning_scale = 1.0
         self.eta = 0.0
         self.chunk_size = self.config.chunk_size
+
+    def dilate_image(self, masked_image, kernel_size=5):
+        kernel = np.ones((kernel_size, kernel_size), np.uint8)
+        dilated_image = cv2.dilate(masked_image, kernel, iterations=1)
+        # save the output image
+        cv2.imwrite('dilated_image.jpg', dilated_image*255)
+        return dilated_image
         
-    def render_reverse(self):
+        
+    def render_reverse(self, has_depth=False):
         # Implement the rendering logic
         for index in range(len(self.datamanager.train_images)):
             data = self.datamanager.train_images[index]
-            data['image'] = (cv2.resize(data['image'], (512, 512)) / 255.0).astype(np.float32)
-            data['depth_image'] = np.expand_dims(cv2.resize(data['depth_image'], (512, 512)), axis=-1)
+            size = (512, 512)
+            # breakpoint()
+            pil_image = Image.fromarray(data["image"].astype(np.uint8))
+            data['image'] = (cv2.resize(data['image'], size) / 255.0).astype(np.float32)
+            data['depth_image'] = np.expand_dims(cv2.resize(data['depth_image'], size), axis=-1)
+            data['mask_image'] = self.dilate_image(data['mask_image'], kernel_size=15)
+            data['mask_image'] = cv2.resize(data['mask_image'], size).astype(np.float32)
             
             rendered_rgb = torch.from_numpy(data['image']).to(torch.float16).to(self.pipe_device)
             rendered_depth = torch.from_numpy(data['depth_image']).to(torch.float16).to(self.pipe_device)
@@ -150,6 +165,7 @@ class GaussCtrlPipeline:
 
             disp_ctrl_chunk = torch.concatenate((ref_disparity_torch, disparities_torch), dim=0)
             latents_chunk = torch.concatenate((ref_z0_torch, latents_torch), dim=0)
+            generator = torch.Generator(device="cuda").manual_seed(0)
             chunk_edited = self.pipe(
                                 prompt=[self.positive_prompt] * (self.num_ref_views+len(chunked_data)),
                                 negative_prompt=[self.negative_prompts] * (self.num_ref_views+len(chunked_data)),
@@ -160,6 +176,7 @@ class GaussCtrlPipeline:
                                 controlnet_conditioning_scale=self.controlnet_conditioning_scale,
                                 eta=self.eta,
                                 output_type='pt',
+                                generator=generator,
                             ).images[self.num_ref_views:]
             chunk_edited = chunk_edited.cpu() 
 
@@ -174,11 +191,12 @@ class GaussCtrlPipeline:
 
                     unedited_image = unedited_images[local_idx].permute(2,0,1)
                     bg_cntrl_edited_image = edited_image * mask[None] + unedited_image * bg_mask[None] 
-                # TODO Save edited image
+                # TODO
                 # Promt testing
                 # -> SDXLControlNetInpainPipeline
                 # Dynamic Ref_image
                 self.datamanager.train_data[global_idx]["image"] = bg_cntrl_edited_image.permute(1,2,0).to(torch.float32) # [512 512 3]
+                saving_image(self.datamanager.train_data[global_idx]["image"], global_idx)
         print("#############################")
         CONSOLE.print("Done Editing", style="bold yellow")
         print("#############################")

@@ -63,11 +63,14 @@ class DataManager:
     def load_images_from_folder(self, folder_path: str) -> List[Dict[str, np.ndarray]]:
         """Loads and matches RGB and depth images from the specified folder."""
         image_folder = os.path.join(folder_path, 'images')
-        depth_folder = os.path.join(folder_path, 'depth')
+        # depth_folder = os.path.join(folder_path, 'depth')
+        depth_folder = '/home/ubuntu/workspace/bhrc/nam/gauss_ctrl_pipeline/data/statue_inpainted/depth'
+        mask_folder = os.path.join(folder_path, 'mask')
 
         # Get the list of image and depth files
         image_files = sorted([f for f in os.listdir(image_folder) if f.endswith(('.png', '.jpg'))])
         depth_files = sorted([f for f in os.listdir(depth_folder) if f.endswith(('.png', '.jpg'))])
+        mask_files = sorted([f for f in os.listdir(mask_folder) if f.endswith(('.png', '.jpg'))])
 
         assert len(image_files) == len(depth_files), "Mismatch between image and depth file counts."
 
@@ -80,6 +83,7 @@ class DataManager:
             # Load images and convert to NumPy arrays
             rgb_image = np.array(Image.open(os.path.join(image_folder, img_file)).convert('RGB'))
             depth_image = np.array(Image.open(os.path.join(depth_folder, depth_file)).convert('L'))
+            mask_image = np.array(Image.open(os.path.join(mask_folder, mask_files[image_idx])).convert('L'))
 
             # Add depth dimension explicitly
             depth_image = np.expand_dims(depth_image, axis=-1)
@@ -87,6 +91,7 @@ class DataManager:
                                       'image': rgb_image,
                                       'depth_image': depth_image, 
                                       'unedited_image': rgb_image, 
+                                      'mask_image': mask_image,
                                       'image_idx': image_idx,
                                       'image_name': img_name,
                                       })
