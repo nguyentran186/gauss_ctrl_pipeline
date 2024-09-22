@@ -2,7 +2,6 @@
 import torch
 import numpy as np
 from PIL import Image
-from transformers import DPTFeatureExtractor, DPTForDepthEstimation
 from diffusers import ControlNetModel, AutoencoderKL, UniPCMultistepScheduler
 from diffusers.utils import load_image
 from pipeline_controlnet_inpaint_sd_xl import StableDiffusionXLControlNetInpaintPipeline
@@ -27,12 +26,6 @@ pipe = StableDiffusionXLControlNetInpaintPipeline.from_pretrained(
 ).to("cuda")
 pipe.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config)
 pipe.enable_model_cpu_offload()
-pipe.unet.set_attn_processor(
-                        processor=utils.CrossViewAttnProcessor(self_attn_coeff=0.4,
-                        unet_chunk_size=1))
-pipe.controlnet.set_attn_processor(
-                        processor=utils.CrossViewAttnProcessor(self_attn_coeff=0,
-                        unet_chunk_size=1)) 
 
 def prepare_image(image):
     return image.resize((1024, 1024), Image.LANCZOS)
@@ -92,7 +85,7 @@ if __name__ == '__main__':
                                              file_name[:-len('jpg')]+'png')).convert("RGB")
         
         mask_image = mask_image.point(lambda p: p * 255)
-        mask_image = dilate_mask(mask_image, kernel_size=15).convert('RGB')
+        mask_image = dilate_mask(mask_image, kernel_size=20).convert('RGB')
 
         controlnet_conditioning_scale = 0.5  # recommended for good generalization
         depth_image = load_image(os.path.join(inpainted_depth_path,
@@ -101,14 +94,25 @@ if __name__ == '__main__':
         depth_images.append(prepare_image(depth_image))
         mask_images.append(prepare_image(mask_image))
     generator = torch.Generator(device="cuda").manual_seed(0)
-    
+
+    ref_images = []
+    idx = []
     for i in range(len(init_images)):
         inpaint_idx = i
-        init_img = [init_images[inpaint_idx]] + init_images[:inpaint_idx] + init_images[inpaint_idx + 1:]
-        mask_img = [mask_images[inpaint_idx]] + mask_images[:inpaint_idx] + mask_images[inpaint_idx + 1:]
-        depth_img = [depth_images[inpaint_idx]] + depth_images[:inpaint_idx] + depth_images[inpaint_idx + 1:]
+        # init_img = [init_images[inpaint_idx]] + init_images[:inpaint_idx] + init_images[inpaint_idx + 1:]
+        # mask_img = [mask_images[inpaint_idx]] + mask_images[:inpaint_idx] + mask_images[inpaint_idx + 1:]
+        # depth_img = [depth_images[inpaint_idx]] + depth_images[:inpaint_idx] + depth_images[inpaint_idx + 1:]
+        init_img = [init_images[inpaint_idx]] + ref_images
+        mask_img = [mask_images[inpaint_idx]] + [mask_images[id] for id in idx]
+        depth_img = [depth_images[inpaint_idx]] + [depth_images[id] for id in idx]
+        pipe.unet.set_attn_processor(
+                        processor=utils.CrossViewAttnProcessor(self_attn_coeff=0.0,
+                        unet_chunk_size=1, num_ref=len(init_img)))
+        pipe.controlnet.set_attn_processor(
+                        processor=utils.CrossViewAttnProcessor(self_attn_coeff=0,
+                        unet_chunk_size=1, num_ref=len(init_img))) 
         images = pipe(
-            [prompt] * len(init_images),
+            [prompt] * len(init_img),
             image=init_img,
             control_image=depth_img,
             mask_image=mask_img,
@@ -116,5 +120,6 @@ if __name__ == '__main__':
             controlnet_conditioning_scale=controlnet_conditioning_scale,
             generator=generator,
         ).images[0]
-        init_images[inpaint_idx] = images
+        ref_images.append(images)
+        idx.append(inpaint_idx)
         resize_and_save([images], init_image.size, [os.path.join(output_path, os.listdir(images_path)[i])])

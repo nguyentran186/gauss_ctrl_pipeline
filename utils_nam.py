@@ -39,7 +39,7 @@ def compute_attn(attn, query, key, value, video_length, ref_frame_index, attenti
     return hidden_states_ref_cross
 
 class CrossViewAttnProcessor:
-    def __init__(self, self_attn_coeff, unet_chunk_size=2, num_ref=4):
+    def __init__(self, self_attn_coeff, unet_chunk_size=2, num_ref=1):
         self.unet_chunk_size = unet_chunk_size
         self.self_attn_coeff = self_attn_coeff
         self.num_ref = num_ref
