@@ -20,6 +20,7 @@ from diffusers.schedulers import DDIMScheduler, DDIMInverseScheduler
 from diffusers.models.attention_processor import AttnProcessor
 from ControlNetDatamanager import DataManagerConfig, DataManager
 import cv2
+from pipeline_controlnet_inpaint_sd_xl import StableDiffusionXLControlNetInpaintPipeline
 
 CONSOLE = Console(width=120)
 
@@ -27,12 +28,13 @@ CONSOLE = Console(width=120)
 class GaussCtrlPipelineConfig:
     datamanager: DataManagerConfig = DataManagerConfig()
     render_rate: int = 500
-    prompt: str = "fit with the background, do not add new things"
+    prompt: str = "fit to surrounding background and do not add anything into image"
     guidance_scale: float = 5
     num_inference_steps: int = 20
     chunk_size: int = 1
     ref_view_num: int = 1
-    diffusion_ckpt: str = 'CompVis/stable-diffusion-v1-4'
+    # diffusion_ckpt: str = 'CompVis/stable-diffusion-v1-4'
+    diffusion_ckpt: str = 'diffusers/stable-diffusion-xl-1.0-inpainting-0.1'
         
 
 class GaussCtrlPipeline:
@@ -53,8 +55,8 @@ class GaussCtrlPipeline:
         
         self.ddim_scheduler = DDIMScheduler.from_pretrained(self.config.diffusion_ckpt, subfolder="scheduler")
         self.ddim_inverser = DDIMInverseScheduler.from_pretrained(self.config.diffusion_ckpt, subfolder="scheduler")
-        controlnet = ControlNetModel.from_pretrained("lllyasviel/sd-controlnet-depth")
-        # controlnet = ControlNetModel.from_pretrained("fusing/stable-diffusion-v1-5-controlnet-depth", torch_dtype=torch.float16)
+        # controlnet = ControlNetModel.from_pretrained("lllyasviel/sd-controlnet-depth")
+        controlnet = ControlNetModel.from_pretrained("fusing/stable-diffusion-v1-5-controlnet-depth", torch_dtype=torch.float16)
         
         self.pipe = StableDiffusionControlNetPipeline.from_pretrained(self.config.diffusion_ckpt, controlnet=controlnet).to(self.pipe_device).to(torch.float16)
         self.pipe.to(self.pipe_device)
@@ -80,8 +82,6 @@ class GaussCtrlPipeline:
     def dilate_image(self, masked_image, kernel_size=5):
         kernel = np.ones((kernel_size, kernel_size), np.uint8)
         dilated_image = cv2.dilate(masked_image, kernel, iterations=1)
-        # save the output image
-        cv2.imwrite('dilated_image.jpg', dilated_image*255)
         return dilated_image
         
         
@@ -109,7 +109,7 @@ class GaussCtrlPipeline:
             latent, _ = self.pipe(prompt=self.positive_prompt, #  placeholder here, since cfg=0
                                 num_inference_steps=self.num_inference_steps, 
                                 latents=init_latent, 
-                                image=disparity, return_dict=False, guidance_scale=0, output_type='latent')
+                                control_image=disparity, return_dict=False, guidance_scale=0, output_type='latent')
             
             latent = latent.cpu()
             # save_path = os.path.join(self.images_path, 'latent', f'{name}.pt')
