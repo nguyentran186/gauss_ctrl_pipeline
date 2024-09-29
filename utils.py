@@ -39,9 +39,10 @@ def compute_attn(attn, query, key, value, video_length, ref_frame_index, attenti
     return hidden_states_ref_cross
 
 class CrossViewAttnProcessor:
-    def __init__(self, self_attn_coeff, unet_chunk_size=2):
+    def __init__(self, self_attn_coeff, unet_chunk_size=2, num_ref=1):
         self.unet_chunk_size = unet_chunk_size
         self.self_attn_coeff = self_attn_coeff
+        self.num_ref = num_ref
 
     def __call__(
             self,
@@ -94,29 +95,35 @@ class CrossViewAttnProcessor:
             #######################################
 
             video_length = key.size()[0] // self.unet_chunk_size
-            ref0_frame_index = [0] * video_length
-            ref1_frame_index = [1] * video_length
-            ref2_frame_index = [2] * video_length
-            ref3_frame_index = [3] * video_length
-            
-            hidden_states_ref0 = compute_attn(attn, query, key, value, video_length, ref0_frame_index, attention_mask)
-            hidden_states_ref1 = compute_attn(attn, query, key, value, video_length, ref1_frame_index, attention_mask)
-            hidden_states_ref2 = compute_attn(attn, query, key, value, video_length, ref2_frame_index, attention_mask)
+
+            list_ref_frame_index = []
+            hidden_state_ref = []
+            for i in range(self.num_ref):
+                list_ref_frame_index.append([i] * video_length)
+                if i == (self.num_ref-1):
+                    continue
+                hidden_state_ref.append(
+                    compute_attn(attn, query, key, value, video_length, list_ref_frame_index[i], attention_mask)
+                )
 
             key = rearrange(key, "(b f) d c -> b f d c", f=video_length)
-            key = key[:, ref3_frame_index]
+            #key = key[:, ref3_frame_index]
+            key = key[:, list_ref_frame_index[-1]]
             key = rearrange(key, "b f d c -> (b f) d c")
             value = rearrange(value, "(b f) d c -> b f d c", f=video_length)
-            value = value[:, ref3_frame_index]
+            #value = value[:, ref3_frame_index]
+            value = value[:, list_ref_frame_index[-1]]
             value = rearrange(value, "b f d c -> (b f) d c")
 
         key = attn.head_to_batch_dim(key)
         value = attn.head_to_batch_dim(value)
 
         attention_probs = attn.get_attention_scores(query, key, attention_mask)
-        hidden_states_ref3 = torch.bmm(attention_probs, value)
+        #hidden_states_ref3 = torch.bmm(attention_probs, value)
+        hidden_states_ref_last = torch.bmm(attention_probs, value)
         
-        hidden_states = self.self_attn_coeff * hidden_states_self + (1 - self.self_attn_coeff) * torch.mean(torch.stack([hidden_states_ref0, hidden_states_ref1, hidden_states_ref2, hidden_states_ref3]), dim=0) if not is_cross_attention else hidden_states_ref3 
+        #hidden_states = self.self_attn_coeff * hidden_states_self + (1 - self.self_attn_coeff) * torch.mean(torch.stack([hidden_states_ref0, hidden_states_ref1, hidden_states_ref2, hidden_states_ref3]), dim=0) if not is_cross_attention else hidden_states_ref3 
+        hidden_states = self.self_attn_coeff * hidden_states_self + (1 - self.self_attn_coeff) * torch.mean(torch.stack(hidden_state_ref+[hidden_states_ref_last]), dim=0) if not is_cross_attention else hidden_states_ref_last
         hidden_states = attn.batch_to_head_dim(hidden_states)
 
         # linear proj
