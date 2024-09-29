@@ -107,11 +107,9 @@ class CrossViewAttnProcessor:
                 )
 
             key = rearrange(key, "(b f) d c -> b f d c", f=video_length)
-            #key = key[:, ref3_frame_index]
             key = key[:, list_ref_frame_index[-1]]
             key = rearrange(key, "b f d c -> (b f) d c")
             value = rearrange(value, "(b f) d c -> b f d c", f=video_length)
-            #value = value[:, ref3_frame_index]
             value = value[:, list_ref_frame_index[-1]]
             value = rearrange(value, "b f d c -> (b f) d c")
 
@@ -119,10 +117,8 @@ class CrossViewAttnProcessor:
         value = attn.head_to_batch_dim(value)
 
         attention_probs = attn.get_attention_scores(query, key, attention_mask)
-        #hidden_states_ref3 = torch.bmm(attention_probs, value)
         hidden_states_ref_last = torch.bmm(attention_probs, value)
         
-        #hidden_states = self.self_attn_coeff * hidden_states_self + (1 - self.self_attn_coeff) * torch.mean(torch.stack([hidden_states_ref0, hidden_states_ref1, hidden_states_ref2, hidden_states_ref3]), dim=0) if not is_cross_attention else hidden_states_ref3 
         hidden_states = self.self_attn_coeff * hidden_states_self + (1 - self.self_attn_coeff) * torch.mean(torch.stack(hidden_state_ref+[hidden_states_ref_last]), dim=0) if not is_cross_attention else hidden_states_ref_last
         hidden_states = attn.batch_to_head_dim(hidden_states)
 

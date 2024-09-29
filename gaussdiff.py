@@ -1,7 +1,7 @@
 import torch
 import os
 import helper
-import gauss_ctrl_pipeline.utils as utils
+import utils
 from diffusers.utils import load_image
 from helper import HARD_PROMPT
 
@@ -52,17 +52,17 @@ class GaussDiff:
             self.images.append(image)
             self.masks.append(mask)
 
-    def edit_default(self, 
-             ref_images_idx=None,
-             prompt=HARD_PROMPT
-             ):
+    def edit_default(self,
+                     ref_images_idx=None,
+                     prompt=HARD_PROMPT
+                     ):
         ref_images = [self.images[i] for i in ref_images_idx]
         ref_masks = [self.masks[i] for i in ref_images_idx]
         self.diffusion.unet.set_attn_processor(
             processor=utils.CrossViewAttnProcessor(
                 self_attn_coeff=1,
                 unet_chunk_size=2, 
-                num_ref=len(ref_images))
+                num_ref=len(ref_images)+1)
         )
         for i in range(len(self.images)):
             images = [self.images[i]] + ref_images
@@ -76,3 +76,12 @@ class GaussDiff:
             ).images[0]
             output = output.resize(self.images[i].size)
             output.save(os.path.join(self.output_path, self.sorted_files[i]))
+
+
+if __name__ == "__main__":
+    data_path = '/home/ubuntu/workspace/bhrc/nam/gauss_ctrl_pipeline/data/bear'
+    output_path = '/home/ubuntu/workspace/bhrc/nam/gauss_ctrl_pipeline/output/bear'
+    ref_images_idx = [0, 1, 2]
+    prompt = HARD_PROMPT
+    gauss_diff = GaussDiff(data_path, output_path)
+    gauss_diff.edit_default(ref_images_idx, prompt)

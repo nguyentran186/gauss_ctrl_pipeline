@@ -13,7 +13,7 @@ def create_diffusion(pretrain_path="diffusers/stable-diffusion-xl-1.0-inpainting
                      device="cuda"
                      ):
     pipe = AutoPipelineForInpainting.from_pretrained(
-        pretrain_path=pretrain_path,
+        pretrained_model_or_path=pretrain_path,
         torch_dtype=torch_dtype,
         variant=variant).to(device)
 
