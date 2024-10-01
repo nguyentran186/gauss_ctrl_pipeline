@@ -24,6 +24,10 @@ class GaussDiff:
         self.diffusion = diffusion
         self.device = device
 
+        self.largest_mask = {
+            'id': 0,
+            'area': 0
+        }
         self.images = []
         self.masks = []
         self.positions = []
@@ -58,7 +62,8 @@ class GaussDiff:
         with open(self.transform_path, 'r') as f:
             data = json.load(f)
             
-        for file_name in self.sorted_files:
+        for file_name_id in range(len(self.sorted_files)):
+            file_name = self.sorted_files[file_name_id]
             image = load_image(os.path.join(self.images_path, file_name)).convert("RGB")
             image = helper.resize1024(image)
             self.images.append(image)
@@ -68,6 +73,11 @@ class GaussDiff:
             mask = helper.dilate_mask(mask, kernel_size=20).convert('RGB')
             mask = helper.resize1024(mask)
             self.masks.append(mask)
+            
+            area = np.sum(np.array(mask) > 0)
+            if area > self.largest_mask['area']:
+                self.largest_mask['id'] = file_name_id
+                self.largest_mask['area'] = area
 
             file_path = 'images/'+file_name
             for frame in data['frames']:
@@ -79,6 +89,9 @@ class GaussDiff:
 
     def calculate_distance(self, i, j):
         return np.linalg.norm(np.array(self.positions[i]) - np.array(self.positions[j]))
+
+    def get_anchor_id(self):
+        return self.largest_mask['id']
 
     def edit_default(self,
                      ref_images_idx=None,
