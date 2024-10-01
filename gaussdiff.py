@@ -2,6 +2,8 @@ import torch
 import os
 import helper
 import utils
+import json
+import numpy as np
 from diffusers.utils import load_image
 from helper import HARD_PROMPT
 
@@ -16,6 +18,7 @@ class GaussDiff:
         self.data_path = data_path
         self.images_path = os.path.join(data_path, 'images')
         self.masks_path = os.path.join(data_path, 'masks')
+        self.transform_path = os.path.join(data_path, 'transforms.json')
         self.output_path = output_path
         os.makedirs(output_path, exist_ok=True)
         self.diffusion = diffusion
@@ -23,9 +26,11 @@ class GaussDiff:
 
         self.images = []
         self.masks = []
+        self.positions = []
+        self.orientations = []
         self.sorted_files = sorted(os.listdir(self.images_path))
         self.prepare_data()
-
+        
         self.generator = torch.Generator(device=device).manual_seed(0)
         
     def change_path(self,
@@ -37,20 +42,40 @@ class GaussDiff:
         self.masks_path = os.path.join(data_path, 'masks')
         self.output_path = output_path if output_path else self.output_path
         os.makedirs(self.output_path, exist_ok=True)
+    
+    def extract_position_orientation(self, transform_matrix):
+        matrix = np.array(transform_matrix)
+        position = matrix[:3, 3]
+        rotation_matrix = matrix[:3, :3]
+
+        return position, rotation_matrix
 
     def prepare_data(self, reset=True):
         if reset:
             self.images = []
             self.masks = []
+
+        with open(self.transform_path, 'r') as f:
+            data = json.load(f)
+            
         for file_name in self.sorted_files:
             image = load_image(os.path.join(self.images_path, file_name)).convert("RGB")
             image = helper.resize1024(image)
+            self.images.append(image)
+
             mask = load_image(os.path.join(self.masks_path, file_name)).convert("RGB")
             mask = mask.point(lambda p: p * 255)
             mask = helper.dilate_mask(mask, kernel_size=20).convert('RGB')
             mask = helper.resize1024(mask)
-            self.images.append(image)
             self.masks.append(mask)
+
+            file_path = 'images/'+file_name
+            for frame in data['frames']:
+                if frame['file_path'] == file_path:
+                    position, orientation = self.extract_position_orientation(frame['transform_matrix'])
+                    self.positions.append(position)
+                    self.orientations.append(orientation)
+                    break
 
     def edit_default(self,
                      ref_images_idx=None,
@@ -84,4 +109,4 @@ if __name__ == "__main__":
     ref_images_idx = [0, 1, 2]
     prompt = HARD_PROMPT
     gauss_diff = GaussDiff(data_path, output_path)
-    gauss_diff.edit_default(ref_images_idx, prompt)
+    # gauss_diff.edit_default(ref_images_idx, prompt)
