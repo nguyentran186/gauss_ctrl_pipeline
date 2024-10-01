@@ -77,6 +77,9 @@ class GaussDiff:
                     self.orientations.append(orientation)
                     break
 
+    def calculate_distance(self, i, j):
+        return np.linalg.norm(np.array(self.positions[i]) - np.array(self.positions[j]))
+
     def edit_default(self,
                      ref_images_idx=None,
                      prompt=HARD_PROMPT
