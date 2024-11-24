@@ -89,9 +89,14 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, depths_params, images_fold
             focal_length_x = intr.params[0]
             FovY = focal2fov(focal_length_x, height)
             FovX = focal2fov(focal_length_x, width)
-        elif intr.model=="PINHOLE":
+        elif intr.model =="PINHOLE":
             focal_length_x = intr.params[0]
             focal_length_y = intr.params[1]
+            FovY = focal2fov(focal_length_y, height)
+            FovX = focal2fov(focal_length_x, width)
+        elif intr.model=="SIMPLE_RADIAL":
+            focal_length_x = intr.params[0]
+            focal_length_y = intr.params[0].copy()
             FovY = focal2fov(focal_length_y, height)
             FovX = focal2fov(focal_length_x, width)
         else:
@@ -179,11 +184,11 @@ def readColmapSceneInfo(path, images, depths, eval, train_test_exp, llffhold=8):
     if eval:
         if "360" in path:
             llffhold = 8
-        if llffhold:
-            print("------------LLFF HOLD-------------")
-            cam_names = [cam_extrinsics[cam_id].name for cam_id in cam_extrinsics]
-            cam_names = sorted(cam_names)
-            test_cam_names_list = [name for idx, name in enumerate(cam_names) if idx % llffhold == 0]
+        # if llffhold:
+        #     print("------------LLFF HOLD-------------")
+        #     cam_names = [cam_extrinsics[cam_id].name for cam_id in cam_extrinsics]
+        #     cam_names = sorted(cam_names)
+        #     test_cam_names_list = [name for idx, name in enumerate(cam_names) if idx % llffhold == 0]
         else:
             with open(os.path.join(path, "sparse/0", "test.txt"), 'r') as file:
                 test_cam_names_list = [line.strip() for line in file]
