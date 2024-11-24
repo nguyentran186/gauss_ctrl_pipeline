@@ -30,19 +30,21 @@ def parse_args():
     
     parser.add_argument("--sparse_path", type=str, default="/workspace/data/sparse/0/", help="Path to COLMAP sparse folder")
     
+    parser.add_argument("--cross_eff", type=float, default=0.2, help="Cross attention coefficent")
+    
     return parser.parse_args()
 
 
-def prepare_pipe(cross_att=False):
+def prepare_pipe(args):
     # Initialize the pipeline
     pipe = AutoPipelineForInpainting.from_pretrained(
         "diffusers/stable-diffusion-xl-1.0-inpainting-0.1",
         torch_dtype=torch.float16,
         variant="fp16"
     ).to("cuda")
-    if cross_att:
+    if args.cross_att:
         pipe.unet.set_attn_processor(
-                            processor=utils.CrossViewAttnProcessor(self_attn_coeff=0.8,
+                            processor=utils.CrossViewAttnProcessor(self_attn_coeff=args.cross_eff,
                             unet_chunk_size=2, num_ref=2))
     return pipe
 
@@ -52,9 +54,9 @@ def generate(images_folder, masks_folder, output_folder, prompt, pipe, args):
     distance = cam_distances(colmap_sparse_path = args.sparse_path, input_image = args.anchor, target_range=(0,1))
     
     if args.cross_att:
-        original_image = load_image(os.path.join(images_folder, args.anchor))
+        original_image = load_image(os.path.join(images_folder, args.anchor[:-len('jpg')] + 'png'))
         image = original_image.resize((1024, 1024))  # Resize to 1024x1024 for processing
-        mask_image = load_image(os.path.join(masks_folder, args.anchor[:-len('jpg')] + 'png'))
+        mask_image = load_image(os.path.join(masks_folder, args.anchor))
         mask_image = mask_image.resize((1024, 1024))
         ref_image = image
         ref_mask = mask_image
@@ -84,13 +86,22 @@ def generate(images_folder, masks_folder, output_folder, prompt, pipe, args):
             if args.cross_att:
                 result = pipe(
                     prompt=[prompt]*2,
-                    image=[image, ref_image],
-                    mask_image=[mask_image, ref_mask],
+                    image=[image, image],
+                    mask_image=[mask_image, mask_image],
                     guidance_scale=8.0,
                     num_inference_steps=20,
                     strength=0.9,
                     generator=generator,
                 ).images[0]
+                # result = pipe(
+                #     prompt=[prompt]*2,
+                #     image=[image, ref_image],
+                #     mask_image=[mask_image, ref_mask],
+                #     guidance_scale=8.0,
+                #     num_inference_steps=20,
+                #     strength=0.9,
+                #     generator=generator,
+                # ).images[0]
             else:
                 result = pipe(
                     prompt=prompt,
@@ -106,12 +117,12 @@ def generate(images_folder, masks_folder, output_folder, prompt, pipe, args):
             result = result.resize(original_size)
 
             # Save the result
-            output_path = os.path.join(output_folder, f"inpainted_{file_name}")
+            output_path = os.path.join(output_folder, 'images', file_name.replace('png', 'jpg'))
             result.save(output_path)
             print(f"Saved: {output_path}")
             
 def main(args):
-    pipe = prepare_pipe(args.cross_att)
+    pipe = prepare_pipe(args)
     # Define input directories and output directory
     data_folder = args.data_folder
     images_folder = os.path.join(data_folder, "images")
@@ -122,6 +133,7 @@ def main(args):
     prompt = args.prompt
     # Create the output directory if it doesn't exist
     os.makedirs(output_folder, exist_ok=True)
+    os.makedirs(os.path.join(output_folder, 'images'), exist_ok=True)
     
     # Save the prompt and args in the output folder as a text file
     prompt_path = os.path.join(output_folder, "config.txt")
