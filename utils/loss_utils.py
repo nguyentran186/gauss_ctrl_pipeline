@@ -89,3 +89,32 @@ def _ssim(img1, img2, window, window_size, channel, size_average=True):
 def fast_ssim(img1, img2):
     ssim_map = FusedSSIMMap.apply(C1, C2, img1, img2)
     return ssim_map.mean()
+
+def geo_loss(invDepth, mono_invdepth, depth_mask):
+    masked_invDepth = invDepth * depth_mask
+    masked_mono_invdepth = mono_invdepth * depth_mask
+
+    # Compute mean values for the masked depths
+    mean_invDepth = masked_invDepth.mean()
+    mean_mono_invdepth = masked_mono_invdepth.mean()
+
+    # Compute covariance
+    covariance = ((masked_invDepth - mean_invDepth) * (masked_mono_invdepth - mean_mono_invdepth) * depth_mask).mean()
+
+    # Compute variances
+    var_invDepth = ((masked_invDepth - mean_invDepth) ** 2 * depth_mask).mean()
+    var_mono_invdepth = ((masked_mono_invdepth - mean_mono_invdepth) ** 2 * depth_mask).mean()
+
+    # Compute geometric loss
+    geo_loss_pure = 1 - covariance / torch.sqrt(var_invDepth * var_mono_invdepth + 1e-8)  # Add epsilon to avoid division by zero
+    return geo_loss_pure
+
+def cosine_similarity_loss(A, B):
+    # normalized_A = A / A.norm(dim=1, keepdim=True)
+    # normalized_B = B / B.norm(dim=1, keepdim=True)
+    # cosine_similarity = (normalized_A * normalized_B).sum(dim=1)
+
+    cosine_similarity = F.cosine_similarity(A, B)
+    loss = 1 - cosine_similarity.mean()
+    
+    return loss

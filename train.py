@@ -12,7 +12,8 @@
 import os
 import torch
 from random import randint
-from utils.loss_utils import l1_loss, ssim
+from utils.loss_utils import l1_loss, ssim, geo_loss, cosine_similarity_loss
+from utils.feature_extractor import get_Feature_from_DinoV2
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
@@ -64,6 +65,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     depth_l1_weight = get_expon_lr_func(opt.depth_l1_weight_init, opt.depth_l1_weight_final, max_steps=opt.iterations)
 
     viewpoint_stack = scene.getTrainCameras().copy()
+    perturbation_viewpoint_stack = None
 
     viewpoint_indices = list(range(len(viewpoint_stack)))
     ema_loss_for_log = 0.0
@@ -125,18 +127,58 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             ssim_value = ssim(image, gt_image)
 
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_value)
+        
+        loss_feature = torch.tensor(0).cuda() 
+        loss_perturbation_depth = torch.tensor(0).cuda() 
 
+        if iteration > 5400:
+            if iteration > 5400 and iteration <= 6600:
+                if not perturbation_viewpoint_stack:
+                    perturbation_viewpoint_stack = scene.getPerturbationCameras(stage=1).copy()
+                perturbation_viewpoint_cam = perturbation_viewpoint_stack.pop(randint(0, len(perturbation_viewpoint_stack)-1))
+            elif iteration > 6600 and iteration <= 7800:
+                if not perturbation_viewpoint_stack:
+                    perturbation_viewpoint_stack = scene.getPerturbationCameras(stage=2).copy()
+                perturbation_viewpoint_cam = perturbation_viewpoint_stack.pop(randint(0, len(perturbation_viewpoint_stack)-1))
+            elif iteration <= 9000:
+                if not perturbation_viewpoint_stack:
+                    perturbation_viewpoint_stack = scene.getPerturbationCameras(stage=3).copy()
+                perturbation_viewpoint_cam = perturbation_viewpoint_stack.pop(randint(0, len(perturbation_viewpoint_stack)-1))
+
+            perturbation_render_pkg = render(perturbation_viewpoint_cam, gaussians, pipe, bg)
+            perturbation_image, perturbation_rendered_depth= perturbation_render_pkg["render"], perturbation_render_pkg["depth"]
+            ### perturbation depth loss
+            # pred_depth = estimate_depth(perturbation_image)
+            # loss_perturbation_depth =   (1 - pearson_corrcoef(rendered_depth.reshape(-1, 1)[:, 0], - gt_depth.reshape(-1, 1)[:, 0]))
+
+            # if torch.isnan(loss_perturbation_depth).sum() == 0:
+            #     loss += depth_weight * loss_perturbation_depth
+            
+            
+            ### feature loss
+            pred_feature = get_Feature_from_DinoV2(perturbation_image)# (1, 768)
+            ref_image = perturbation_viewpoint_cam.original_image.cuda()
+            ref_feature = get_Feature_from_DinoV2(ref_image)
+            loss_feature = cosine_similarity_loss(pred_feature, ref_feature)
+            
+            feature_loss_weight = 0.05
+            loss += feature_loss_weight * loss_feature 
+            
         # Depth regularization
         Ll1depth_pure = 0.0
         if depth_l1_weight(iteration) > 0 and viewpoint_cam.depth_reliable:
             invDepth = render_pkg["depth"]
             mono_invdepth = viewpoint_cam.invdepthmap.cuda()
             depth_mask = viewpoint_cam.depth_mask.cuda()
+            # breakpoint()
+            L_geo_pure = geo_loss(invDepth, mono_invdepth, depth_mask)
 
-            Ll1depth_pure = torch.abs((invDepth  - mono_invdepth) * depth_mask).mean()
-            Ll1depth = depth_l1_weight(iteration) * Ll1depth_pure 
-            loss += Ll1depth
-            Ll1depth = Ll1depth.item()
+            # Ll1depth_pure = torch.abs((invDepth  - mono_invdepth) * depth_mask).mean()
+            # Ll1depth = depth_l1_weight(iteration) * Ll1depth_pure 
+            # loss += Ll1depth
+            # Ll1depth = Ll1depth.item()
+            loss += 0.05 * L_geo_pure
+            Ll1depth = L_geo_pure.item()
         else:
             Ll1depth = 0
 

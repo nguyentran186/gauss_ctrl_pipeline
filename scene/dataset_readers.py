@@ -44,6 +44,9 @@ class SceneInfo(NamedTuple):
     nerf_normalization: dict
     ply_path: str
     is_nerf_synthetic: bool
+    perturbation_cameras_stage1: list
+    perturbation_cameras_stage2: list
+    perturbation_cameras_stage3: list
 
 def getNerfppNorm(cam_info):
     def get_center_and_diag(cam_centers):
@@ -70,6 +73,9 @@ def getNerfppNorm(cam_info):
 
 def readColmapCameras(cam_extrinsics, cam_intrinsics, depths_params, images_folder, depths_folder, test_cam_names_list):
     cam_infos = []
+    cam_perturbation_infos_unsorted = [] ###
+    cam_perturbation_infos_unsorted_stage2 = [] ###
+    cam_perturbation_infos_unsorted_stage3 = [] ###
     for idx, key in enumerate(cam_extrinsics):
         sys.stdout.write('\r')
         # the exact output you're looking for:
@@ -84,6 +90,7 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, depths_params, images_fold
         uid = intr.id
         R = np.transpose(qvec2rotmat(extr.qvec))
         T = np.array(extr.tvec)
+        T_perturbation = T + np.random.uniform(-0.05, 0.05, size=(1, 3)) ###
 
         if intr.model=="SIMPLE_PINHOLE":
             focal_length_x = intr.params[0]
@@ -118,9 +125,29 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, depths_params, images_fold
                               image_path=image_path, image_name=image_name, depth_path=depth_path,
                               width=width, height=height, is_test=image_name in test_cam_names_list)
         cam_infos.append(cam_info)
+        
+        ## stage 1 perturbation
+        cam_perturbation_info = CameraInfo(uid=uid, R=R, T=T_perturbation, FovY=FovY, FovX=FovX, depth_params=depth_params,
+                                image_path=image_path, image_name=image_name, depth_path=depth_path,
+                                width=width, height=height, is_test=image_name in test_cam_names_list)
+        cam_perturbation_infos_unsorted.append(cam_perturbation_info)
+        
+        ## stage 2 perturbation
+        T_perturbation_stage2 = T + np.random.uniform(-0.05 * 2, 0.05 * 2, size=(1, 3))
+        cam_perturbation_info_stage2 = CameraInfo(uid=uid, R=R, T=T_perturbation_stage2, FovY=FovY, FovX=FovX, depth_params=depth_params,
+                                image_path=image_path, image_name=image_name, depth_path=depth_path,
+                                width=width, height=height, is_test=image_name in test_cam_names_list)
+        cam_perturbation_infos_unsorted_stage2.append(cam_perturbation_info_stage2)
+        
+        ## stage 3 perturbation
+        T_perturbation_stage3 = T + np.random.uniform(-0.05 * 4, 0.05 * 4, size=(1, 3))
+        cam_perturbation_info_stage3 = CameraInfo(uid=uid, R=R, T=T_perturbation_stage3, FovY=FovY, FovX=FovX, depth_params=depth_params,
+                                image_path=image_path, image_name=image_name, depth_path=depth_path,
+                                width=width, height=height, is_test=image_name in test_cam_names_list)
+        cam_perturbation_infos_unsorted_stage3.append(cam_perturbation_info_stage3)
 
     sys.stdout.write('\n')
-    return cam_infos
+    return cam_infos, cam_perturbation_infos_unsorted, cam_perturbation_infos_unsorted_stage2, cam_perturbation_infos_unsorted_stage3
 
 def fetchPly(path):
     plydata = PlyData.read(path)
@@ -196,12 +223,14 @@ def readColmapSceneInfo(path, images, depths, eval, train_test_exp, llffhold=8):
         test_cam_names_list = []
 
     reading_dir = "images" if images == None else images
-    cam_infos_unsorted = readColmapCameras(
+    cam_infos_unsorted, cam_perturbation_infos_unsorted_stage1, cam_perturbation_infos_unsorted_stage2, cam_perturbation_infos_unsorted_stage3 = readColmapCameras(
         cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, depths_params=depths_params,
         images_folder=os.path.join(path, reading_dir), 
         depths_folder=os.path.join(path, depths) if depths != "" else "", test_cam_names_list=test_cam_names_list)
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
-
+    cam_perturbation_infos_stage1 = sorted(cam_perturbation_infos_unsorted_stage1.copy(), key = lambda x : x.image_name) ###
+    cam_perturbation_infos_stage2 = sorted(cam_perturbation_infos_unsorted_stage2.copy(), key = lambda x : x.image_name) ###
+    cam_perturbation_infos_stage3 = sorted(cam_perturbation_infos_unsorted_stage3.copy(), key = lambda x : x.image_name) ###
     train_cam_infos = [c for c in cam_infos if train_test_exp or not c.is_test]
     test_cam_infos = [c for c in cam_infos if c.is_test]
 
@@ -227,7 +256,10 @@ def readColmapSceneInfo(path, images, depths, eval, train_test_exp, llffhold=8):
                            test_cameras=test_cam_infos,
                            nerf_normalization=nerf_normalization,
                            ply_path=ply_path,
-                           is_nerf_synthetic=False)
+                           is_nerf_synthetic=False,
+                           perturbation_cameras_stage1=cam_perturbation_infos_stage1,
+                           perturbation_cameras_stage2=cam_perturbation_infos_stage2,
+                           perturbation_cameras_stage3=cam_perturbation_infos_stage3)
     return scene_info
 
 def readCamerasFromTransforms(path, transformsfile, depths_folder, white_background, is_test, extension=".png"):

@@ -39,6 +39,9 @@ class Scene:
 
         self.train_cameras = {}
         self.test_cameras = {}
+        self.perturbation_cameras_stage1 = {} ###
+        self.perturbation_cameras_stage2 = {} ###
+        self.perturbation_cameras_stage3 = {} ###
 
         if os.path.exists(os.path.join(args.source_path, "sparse")):
             scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.depths, args.eval, args.train_test_exp)
@@ -47,7 +50,7 @@ class Scene:
             scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.depths, args.eval)
         else:
             assert False, "Could not recognize scene type!"
-
+                
         if not self.loaded_iter:
             with open(scene_info.ply_path, 'rb') as src_file, open(os.path.join(self.model_path, "input.ply") , 'wb') as dest_file:
                 dest_file.write(src_file.read())
@@ -65,6 +68,9 @@ class Scene:
         if shuffle:
             random.shuffle(scene_info.train_cameras)  # Multi-res consistent random shuffling
             random.shuffle(scene_info.test_cameras)  # Multi-res consistent random shuffling
+            random.shuffle(scene_info.perturbation_cameras_stage1)  ###
+            random.shuffle(scene_info.perturbation_cameras_stage2)  ###
+            random.shuffle(scene_info.perturbation_cameras_stage3)  ###
 
         self.cameras_extent = scene_info.nerf_normalization["radius"]
 
@@ -73,6 +79,9 @@ class Scene:
             self.train_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args, scene_info.is_nerf_synthetic, False)
             print("Loading Test Cameras")
             self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args, scene_info.is_nerf_synthetic, True)
+            self.perturbation_cameras_stage1[resolution_scale] = cameraList_from_camInfos(scene_info.perturbation_cameras_stage1, resolution_scale, args, scene_info.is_nerf_synthetic, False)
+            self.perturbation_cameras_stage2[resolution_scale] = cameraList_from_camInfos(scene_info.perturbation_cameras_stage2, resolution_scale, args, scene_info.is_nerf_synthetic, False)
+            self.perturbation_cameras_stage3[resolution_scale] = cameraList_from_camInfos(scene_info.perturbation_cameras_stage3, resolution_scale, args, scene_info.is_nerf_synthetic, False)
 
         if self.loaded_iter:
             self.gaussians.load_ply(os.path.join(self.model_path,
@@ -98,3 +107,11 @@ class Scene:
 
     def getTestCameras(self, scale=1.0):
         return self.test_cameras[scale]
+    
+    def getPerturbationCameras(self, stage, scale=1.0): ###
+        if stage == 1:
+            return self.perturbation_cameras_stage1[scale]
+        elif stage == 2:
+            return self.perturbation_cameras_stage2[scale]
+        elif stage == 3:
+            return self.perturbation_cameras_stage3[scale]
